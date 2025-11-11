@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Microondas Timer OCR</title>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.0/dist/tesseract.min.js"></script>
+  <style>
+    body { margin:0; font-family: system-ui; background: #111; color: #fff; text-align: center; }
+    #video { width: 100%; max-width: 500px; border: 4px solid #00ff00; border-radius: 16px; margin: 20px auto; display: block; }
+    #canvas { display: none; }
+    #timer { font-size: 4rem; margin: 20px; }
+    button { padding: 16px 32px; font-size: 1.2rem; background: #00ff00; border: none; border-radius: 50px; margin: 10px; }
+    .hidden { display: none; }
+    #status { font-size: 1.2rem; color: #0f0; }
+  </style>
+</head>
+<body>
+  <h1>📟 Microondas Timer OCR</h1>
+  <p>Aponta pro visor do micro-ondas!</p>
+  <video id="video" playsinline></video>
+  <canvas id="canvas"></canvas>
+  <div id="timer">00:00</div>
+  <button id="startBtn">🎥 Ativar Câmera</button>
+  <button id="stopBtn" class="hidden">⏹ Parar</button>
+  <div id="status">Toque em Ativar Câmera</div>
+
+  <script>
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const timerDisplay = document.getElementById('timer');
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const status = document.getElementById('status');
+
+    let stream = null;
+    let timerInterval = null;
+    let secondsLeft = 0;
+    let worker = null;
+    let ocrInterval = null;
+
+    // Iniciar câmera
+    startBtn.onclick = async () => {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+      video.srcObject = stream;
+      video.play();
+      startBtn.classList.add('hidden');
+      stopBtn.classList.remove('hidden');
+      status.textContent = "Lendo visor...";
+      startOCR();
+    };
+
+    stopBtn.onclick = async () => {
+      if (stream) stream.getTracks().forEach(t => t.stop());
+      if (worker) {
+        await worker.terminate();
+        worker = null;
+      }
+      if (ocrInterval) {
+        clearInterval(ocrInterval);
+        ocrInterval = null;
+      }
+      clearInterval(timerInterval);
+      video.srcObject = null;
+      startBtn.classList.remove('hidden');
+      stopBtn.classList.add('hidden');
+      timerDisplay.textContent = "00:00";
+      status.textContent = "Parado";
+    };
+
+    // OCR com Tesseract
+    async function startOCR() {
+      if (worker) {
+        await worker.terminate();
+      }
+
+      worker = await Tesseract.createWorker({
+        workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.0/worker.min.js',
+        corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@5.1.0',
+      });
+
+      await worker.loadLanguage('eng');
+      await worker.initialize('eng');
+
+      if (ocrInterval) clearInterval(ocrInterval);
+
+      ocrInterval = setInterval(async () => {
+        if (!video.videoWidth) return;
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        ctx.drawImage(video, 0, 0);
+        
+        const result = await worker.recognize(canvas);
+        const text = result.data.text.replace(/\D/g, ''); // só números
+        
+        if (text.length >= 3) {
+          let mins = 0, secs = 0;
+          if (text.length === 4) { // 0125 ou 125
+            mins = parseInt(text.slice(0, -2)) || 0;
+            secs = parseInt(text.slice(-2)) || 0;
+          } else if (text.length === 3) { // 125
+            mins = parseInt(text[0]) || 0;
+            secs = parseInt(text.slice(1)) || 0;
+          } else if (text.length === 2) {
+            secs = parseInt(text) || 0;
+          }
+          
+          const totalSeconds = mins * 60 + secs;
+          if (totalSeconds > 0 && totalSeconds < 3600) { // máximo 1h
+            if (secondsLeft !== totalSeconds) {
+              secondsLeft = totalSeconds;
+              startTimer();
+              status.textContent = `Timer detectado: ${mins}:${secs.toString().padStart(2,'0')}`;
+            }
+          }
+        }
+      }, 2000); // a cada 2s
+    }
+
+    // Timer
+    function startTimer() {
+      clearInterval(timerInterval);
+      timerInterval = setInterval(() => {
+        if (secondsLeft <= 0) {
+          clearInterval(timerInterval);
+          timerDisplay.textContent = "ACABOU!";
+          status.textContent = "Tempo esgotado!";
+          playAlarm();
+          return;
+        }
+        secondsLeft--;
+        const m = Math.floor(secondsLeft / 60);
+        const s = secondsLeft % 60;
+        timerDisplay.textContent = `${m}:${s.toString().padStart(2,'0')}`;
+      }, 1000);
+    }
+
+    // Alarme + vibração + notificação
+    function playAlarm() {
+      // Som (funciona mesmo com tela bloqueada se já interagiu antes)
+      const audio = new Audio("https://assets.mixkit.co/sfx/preview/mixkit-alarm-digital-clock-beep-989.mp3");
+      audio.loop = true;
+      audio.play().catch(() => {});
+      
+      // Vibrar (só Android)
+      if (navigator.vibrate) {
+        navigator.vibrate([1000, 500, 1000, 500, 1000]);
+      }
+
+      // Notificação (permissão)
+      if (Notification.permission === "granted") {
+        new Notification("Microondas acabou!", { body: "Corre antes que queime!", icon: "https://cdn-icons-png.flaticon.com/512/2303/2303043.png" });
+      } else if (Notification.permission !== "denied") {
+        Notification.requestPermission();
+      }
+
+      setTimeout(() => audio.pause(), 30000); // para após 30s
+    }
+  </script>
+</body>
+</html>
