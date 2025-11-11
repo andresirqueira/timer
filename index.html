@@ -67,7 +67,7 @@
     let audioUnlocked = false;
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     const audioCtx = AudioContextClass ? new AudioContextClass() : null;
-    const alarmAudio = new Audio("libs/audio/alarm.wav");
+    const alarmAudio = new Audio("https://assets.mixkit.co/sfx/preview/mixkit-alarm-digital-clock-beep-989.mp3");
     alarmAudio.loop = true;
 
     async function ensureAudioUnlocked() {
