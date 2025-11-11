@@ -39,6 +39,8 @@
     let secondsLeft = 0;
     let worker = null;
     let ocrInterval = null;
+    const alarmAudio = new Audio("https://assets.mixkit.co/sfx/preview/mixkit-alarm-digital-clock-beep-989.mp3");
+    alarmAudio.loop = true;
 
     async function stopCamera({ resetTimer = true, message } = {}) {
       if (stream) {
@@ -74,9 +76,20 @@
 
     // Iniciar câmera
     startBtn.onclick = async () => {
+      try {
+        await alarmAudio.play();
+        alarmAudio.pause();
+        alarmAudio.currentTime = 0;
+      } catch (_) {
+        // ignore - browsers may block until later interaction
+      }
+      alarmAudio.load();
+
       stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
       video.srcObject = stream;
       video.play();
+      secondsLeft = 0;
+      timerDisplay.textContent = "00:00";
       startBtn.classList.add('hidden');
       stopBtn.classList.remove('hidden');
       status.textContent = "Lendo visor...";
@@ -166,7 +179,7 @@
       timerInterval = setInterval(() => {
         if (secondsLeft <= 0) {
           clearInterval(timerInterval);
-          timerDisplay.textContent = "ACABOU!";
+          timerDisplay.textContent = "COMIDA PRONTA!";
           status.textContent = "Tempo esgotado!";
           playAlarm();
           return;
@@ -179,10 +192,8 @@
 
     // Alarme + vibração + notificação
     function playAlarm() {
-      // Som (funciona mesmo com tela bloqueada se já interagiu antes)
-      const audio = new Audio("https://assets.mixkit.co/sfx/preview/mixkit-alarm-digital-clock-beep-989.mp3");
-      audio.loop = true;
-      audio.play().catch(() => {});
+      alarmAudio.currentTime = 0;
+      alarmAudio.play().catch(() => {});
       
       // Vibrar (só Android)
       if (navigator.vibrate) {
@@ -196,7 +207,7 @@
         Notification.requestPermission();
       }
 
-      setTimeout(() => audio.pause(), 30000); // para após 30s
+      setTimeout(() => alarmAudio.pause(), 30000); // para após 30s
     }
   </script>
 </body>
