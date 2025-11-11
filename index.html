@@ -86,7 +86,7 @@
       await worker.loadLanguage('eng');
       await worker.initialize('eng');
       await worker.setParameters({
-        tessedit_char_whitelist: '0123456789',
+        tessedit_char_whitelist: '0123456789:.',
       });
 
       if (ocrInterval) clearInterval(ocrInterval);
@@ -98,27 +98,43 @@
         ctx.drawImage(video, 0, 0);
         
         const result = await worker.recognize(canvas);
-        const text = result.data.text.replace(/\D/g, ''); // só números
-        
-        if (text.length >= 3) {
-          let mins = 0, secs = 0;
-          if (text.length === 4) { // 0125 ou 125
-            mins = parseInt(text.slice(0, -2)) || 0;
-            secs = parseInt(text.slice(-2)) || 0;
-          } else if (text.length === 3) { // 125
-            mins = parseInt(text[0]) || 0;
-            secs = parseInt(text.slice(1)) || 0;
-          } else if (text.length === 2) {
-            secs = parseInt(text) || 0;
-          }
-          
-          const totalSeconds = mins * 60 + secs;
-          if (totalSeconds > 0 && totalSeconds < 3600) { // máximo 1h
-            if (secondsLeft !== totalSeconds) {
-              secondsLeft = totalSeconds;
-              startTimer();
-              status.textContent = `Timer detectado: ${mins}:${secs.toString().padStart(2,'0')}`;
+        const rawText = result.data.text.replace(/\s+/g, '');
+        let mins = 0;
+        let secs = 0;
+
+        const colonMatch = rawText.match(/(\d{1,2})[:.](\d{2})/);
+
+        if (colonMatch) {
+          mins = parseInt(colonMatch[1], 10) || 0;
+          secs = parseInt(colonMatch[2], 10) || 0;
+        } else {
+          const digitsOnly = rawText.replace(/\D/g, '');
+
+          if (digitsOnly.length >= 2) {
+            if (digitsOnly.length >= 4) {
+              const trimmed = digitsOnly.slice(-4);
+              mins = parseInt(trimmed.slice(0, -2), 10) || 0;
+              secs = parseInt(trimmed.slice(-2), 10) || 0;
+            } else if (digitsOnly.length === 3) {
+              mins = parseInt(digitsOnly.slice(0, 1), 10) || 0;
+              secs = parseInt(digitsOnly.slice(1), 10) || 0;
+            } else {
+              secs = parseInt(digitsOnly, 10) || 0;
             }
+          }
+        }
+
+        if (secs >= 60) {
+          mins += Math.floor(secs / 60);
+          secs = secs % 60;
+        }
+
+        const totalSeconds = mins * 60 + secs;
+        if (totalSeconds > 0 && totalSeconds < 3600) { // máximo 1h
+          if (secondsLeft !== totalSeconds) {
+            secondsLeft = totalSeconds;
+            startTimer();
+            status.textContent = `Timer detectado: ${mins}:${secs.toString().padStart(2,'0')}`;
           }
         }
       }, 2000); // a cada 2s
