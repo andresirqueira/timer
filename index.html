@@ -40,19 +40,11 @@
     let worker = null;
     let ocrInterval = null;
 
-    // Iniciar câmera
-    startBtn.onclick = async () => {
-      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-      video.srcObject = stream;
-      video.play();
-      startBtn.classList.add('hidden');
-      stopBtn.classList.remove('hidden');
-      status.textContent = "Lendo visor...";
-      startOCR();
-    };
-
-    stopBtn.onclick = async () => {
-      if (stream) stream.getTracks().forEach(t => t.stop());
+    async function stopCamera({ resetTimer = true, message } = {}) {
+      if (stream) {
+        stream.getTracks().forEach(t => t.stop());
+        stream = null;
+      }
       if (worker) {
         await worker.terminate();
         worker = null;
@@ -65,8 +57,34 @@
       video.srcObject = null;
       startBtn.classList.remove('hidden');
       stopBtn.classList.add('hidden');
-      timerDisplay.textContent = "00:00";
-      status.textContent = "Parado";
+      if (resetTimer) {
+        secondsLeft = 0;
+        timerDisplay.textContent = "00:00";
+      }
+      if (message !== undefined) {
+        status.textContent = message;
+      }
+    }
+
+    function updateTimerDisplay() {
+      const m = Math.floor(secondsLeft / 60);
+      const s = secondsLeft % 60;
+      timerDisplay.textContent = `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
+    }
+
+    // Iniciar câmera
+    startBtn.onclick = async () => {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+      video.srcObject = stream;
+      video.play();
+      startBtn.classList.add('hidden');
+      stopBtn.classList.remove('hidden');
+      status.textContent = "Lendo visor...";
+      startOCR();
+    };
+
+    stopBtn.onclick = async () => {
+      await stopCamera({ message: "Parado" });
     };
 
     // OCR com Tesseract
@@ -133,6 +151,8 @@
         if (totalSeconds > 0 && totalSeconds < 3600) { // máximo 1h
           if (secondsLeft !== totalSeconds) {
             secondsLeft = totalSeconds;
+            updateTimerDisplay();
+            await stopCamera({ resetTimer: false });
             startTimer();
             status.textContent = `Timer detectado: ${mins}:${secs.toString().padStart(2,'0')}`;
           }
@@ -152,10 +172,9 @@
           return;
         }
         secondsLeft--;
-        const m = Math.floor(secondsLeft / 60);
-        const s = secondsLeft % 60;
-        timerDisplay.textContent = `${m}:${s.toString().padStart(2,'0')}`;
+        updateTimerDisplay();
       }, 1000);
+      updateTimerDisplay();
     }
 
     // Alarme + vibração + notificação
