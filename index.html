@@ -9,10 +9,18 @@
     body { margin:0; font-family: system-ui; background: #111; color: #fff; text-align: center; }
     #video { width: 100%; max-width: 500px; border: 4px solid #00ff00; border-radius: 16px; margin: 20px auto; display: block; }
     #canvas { display: none; }
-    #timer { font-size: 4rem; margin: 20px; }
-    button { padding: 16px 32px; font-size: 1.2rem; background: #00ff00; border: none; border-radius: 50px; margin: 10px; }
+    #timer { font-size: 4rem; margin: 20px; display: flex; align-items: center; justify-content: center; min-height: 120px; }
+    #timer.ready { font-size: 5rem; }
+    #timer span { display: inline-block; }
+    button { padding: 14px 28px; font-size: 1.1rem; background: #00ff00; border: none; border-radius: 36px; margin: 10px; cursor: pointer; transition: transform 0.2s ease; }
+    button:active { transform: scale(0.97); }
     .hidden { display: none; }
-    #status { font-size: 1.2rem; color: #0f0; }
+    #status { font-size: 1.2rem; color: #0f0; margin-top: 10px; }
+    #manualControls { margin-top: 24px; }
+    #manualControls h2 { margin-bottom: 8px; font-size: 1.4rem; }
+    .manual-row { display: flex; align-items: center; justify-content: center; gap: 12px; margin-bottom: 12px; }
+    input[type="number"] { width: 80px; padding: 10px; border-radius: 16px; border: 2px solid #0f0; background: #111; color: #fff; font-size: 1.3rem; text-align: center; }
+    .manual-sep { font-size: 1.6rem; }
   </style>
 </head>
 <body>
@@ -20,9 +28,19 @@
   <p>Aponta pro visor do micro-ondas!</p>
   <video id="video" playsinline></video>
   <canvas id="canvas"></canvas>
-  <div id="timer">00:00</div>
+  <div id="timer"><span id="timerText">00:00</span></div>
   <button id="startBtn">🎥 Ativar Câmera</button>
   <button id="stopBtn" class="hidden">⏹ Parar</button>
+  <button id="resetBtn">🔁 Resetar</button>
+  <div id="manualControls">
+    <h2>Timer Manual</h2>
+    <div class="manual-row">
+      <input id="manualMinutes" type="number" min="0" max="59" value="0" aria-label="Minutos">
+      <span class="manual-sep">:</span>
+      <input id="manualSeconds" type="number" min="0" max="59" value="30" aria-label="Segundos">
+    </div>
+    <button id="manualStartBtn">▶️ Iniciar Manual</button>
+  </div>
   <div id="status">Toque em Ativar Câmera</div>
 
   <script>
@@ -30,8 +48,13 @@
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
     const timerDisplay = document.getElementById('timer');
+    const timerText = document.getElementById('timerText');
     const startBtn = document.getElementById('startBtn');
     const stopBtn = document.getElementById('stopBtn');
+    const resetBtn = document.getElementById('resetBtn');
+    const manualMinutes = document.getElementById('manualMinutes');
+    const manualSeconds = document.getElementById('manualSeconds');
+    const manualStartBtn = document.getElementById('manualStartBtn');
     const status = document.getElementById('status');
 
     let stream = null;
@@ -39,8 +62,51 @@
     let secondsLeft = 0;
     let worker = null;
     let ocrInterval = null;
+    let alarmTimeout = null;
+    let beepInterval = null;
+    let audioUnlocked = false;
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    const audioCtx = AudioContextClass ? new AudioContextClass() : null;
     const alarmAudio = new Audio("https://assets.mixkit.co/sfx/preview/mixkit-alarm-digital-clock-beep-989.mp3");
     alarmAudio.loop = true;
+
+    async function ensureAudioUnlocked() {
+      if (audioUnlocked) return;
+      try {
+        await alarmAudio.play();
+        alarmAudio.pause();
+        alarmAudio.currentTime = 0;
+        audioUnlocked = true;
+      } catch (_) {
+        // browsers podem bloquear até próximo gesto
+      }
+      if (audioCtx && audioCtx.state === "suspended") {
+        try {
+          await audioCtx.resume();
+        } catch (_) {}
+      }
+    }
+
+    function scheduleBeepPattern() {
+      if (!audioCtx) return;
+      const now = audioCtx.currentTime + 0.05;
+      const createBeep = (startTime) => {
+        const oscillator = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        oscillator.type = "square";
+        oscillator.frequency.value = 880;
+        gain.gain.setValueAtTime(0, startTime);
+        gain.gain.linearRampToValueAtTime(0.4, startTime + 0.05);
+        gain.gain.linearRampToValueAtTime(0, startTime + 0.45);
+        oscillator.connect(gain).connect(audioCtx.destination);
+        oscillator.start(startTime);
+        oscillator.stop(startTime + 0.5);
+      };
+
+      for (let i = 0; i < 3; i++) {
+        createBeep(now + i * 0.6);
+      }
+    }
 
     async function stopCamera({ resetTimer = true, message } = {}) {
       if (stream) {
@@ -56,12 +122,14 @@
         ocrInterval = null;
       }
       clearInterval(timerInterval);
+      stopAlarm();
       video.srcObject = null;
       startBtn.classList.remove('hidden');
       stopBtn.classList.add('hidden');
+      timerDisplay.classList.remove('ready');
       if (resetTimer) {
         secondsLeft = 0;
-        timerDisplay.textContent = "00:00";
+        timerText.textContent = "00:00";
       }
       if (message !== undefined) {
         status.textContent = message;
@@ -71,25 +139,21 @@
     function updateTimerDisplay() {
       const m = Math.floor(secondsLeft / 60);
       const s = secondsLeft % 60;
-      timerDisplay.textContent = `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
+      timerDisplay.classList.remove('ready');
+      timerText.textContent = `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
     }
 
     // Iniciar câmera
     startBtn.onclick = async () => {
-      try {
-        await alarmAudio.play();
-        alarmAudio.pause();
-        alarmAudio.currentTime = 0;
-      } catch (_) {
-        // ignore - browsers may block until later interaction
-      }
+      await ensureAudioUnlocked();
       alarmAudio.load();
 
       stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
       video.srcObject = stream;
       video.play();
       secondsLeft = 0;
-      timerDisplay.textContent = "00:00";
+      timerDisplay.classList.remove('ready');
+      timerText.textContent = "00:00";
       startBtn.classList.add('hidden');
       stopBtn.classList.remove('hidden');
       status.textContent = "Lendo visor...";
@@ -98,6 +162,43 @@
 
     stopBtn.onclick = async () => {
       await stopCamera({ message: "Parado" });
+    };
+
+    resetBtn.onclick = async () => {
+      await ensureAudioUnlocked();
+      await stopCamera({ message: "Timer resetado" });
+    };
+
+    const clamp = (value, max) => {
+      const num = Number.parseInt(value, 10);
+      if (Number.isNaN(num) || num < 0) return 0;
+      return Math.min(num, max);
+    };
+
+    manualMinutes.addEventListener('change', () => {
+      manualMinutes.value = clamp(manualMinutes.value, 59);
+    });
+    manualSeconds.addEventListener('change', () => {
+      manualSeconds.value = clamp(manualSeconds.value, 59);
+    });
+
+    manualStartBtn.onclick = async () => {
+      await ensureAudioUnlocked();
+      const mins = clamp(manualMinutes.value, 59);
+      const secs = clamp(manualSeconds.value, 59);
+      manualMinutes.value = mins;
+      manualSeconds.value = secs;
+      const totalSeconds = mins * 60 + secs;
+      if (totalSeconds <= 0) {
+        status.textContent = "Informe um tempo manual válido.";
+        return;
+      }
+
+      await stopCamera({ resetTimer: false });
+      secondsLeft = totalSeconds;
+      updateTimerDisplay();
+      startTimer();
+      status.textContent = `Timer manual: ${mins}:${secs.toString().padStart(2,'0')}`;
     };
 
     // OCR com Tesseract
@@ -179,7 +280,8 @@
       timerInterval = setInterval(() => {
         if (secondsLeft <= 0) {
           clearInterval(timerInterval);
-          timerDisplay.textContent = "COMIDA PRONTA!";
+          timerDisplay.classList.add('ready');
+          timerText.textContent = "🍽️";
           status.textContent = "Tempo esgotado!";
           playAlarm();
           return;
@@ -192,8 +294,12 @@
 
     // Alarme + vibração + notificação
     function playAlarm() {
+      stopAlarm();
+      ensureAudioUnlocked();
       alarmAudio.currentTime = 0;
       alarmAudio.play().catch(() => {});
+      scheduleBeepPattern();
+      beepInterval = setInterval(scheduleBeepPattern, 2000);
       
       // Vibrar (só Android)
       if (navigator.vibrate) {
@@ -207,7 +313,23 @@
         Notification.requestPermission();
       }
 
-      setTimeout(() => alarmAudio.pause(), 30000); // para após 30s
+      alarmTimeout = setTimeout(() => alarmAudio.pause(), 30000); // para após 30s
+    }
+
+    function stopAlarm() {
+      alarmAudio.pause();
+      alarmAudio.currentTime = 0;
+      if (alarmTimeout) {
+        clearTimeout(alarmTimeout);
+        alarmTimeout = null;
+      }
+      if (beepInterval) {
+        clearInterval(beepInterval);
+        beepInterval = null;
+      }
+      if (navigator.vibrate) {
+        navigator.vibrate(0);
+      }
     }
   </script>
 </body>
