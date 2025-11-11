@@ -75,11 +75,13 @@
         await worker.terminate();
       }
 
-      worker = await Tesseract.createWorker({
+      worker = await Tesseract.createWorker('eng', 1, {
         workerPath: 'libs/tesseract/worker.min.js',
+        langPath: 'libs/tesseract/lang',
         corePath: 'libs/tesseract/tesseract-core.wasm.js',
       });
 
+      await worker.load();
       await worker.loadLanguage('eng');
       await worker.initialize('eng');
 
